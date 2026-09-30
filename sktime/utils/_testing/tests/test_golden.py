@@ -57,6 +57,18 @@ class _StepForecaster(BaseForecaster):
         return pd.DataFrame(values, index=y_pred.index, columns=columns)
 
 
+class _HorizonDependentForecaster(_StepForecaster):
+    """Like ``_StepForecaster``, with quantiles shifted by the largest step in fh.
+
+    Mimics autoregressive models, whose output at a step can depend on how far
+    ahead the forecast is generated.
+    """
+
+    def _predict_quantiles(self, fh, X, alpha):
+        pred_quantiles = super()._predict_quantiles(fh, X, alpha)
+        return pred_quantiles + max(fh.to_relative(self.cutoff))
+
+
 def _univariate():
     return pd.Series(
         [1.0, 2.0, 3.0, 4.0],
@@ -184,3 +196,30 @@ def test_golden_case_multivariate():
     )
     with pytest.raises(AssertionError, match="golden case 'multivariate-transposed'"):
         assert_golden_forecast(_StepForecaster, transposed)
+
+
+def test_golden_case_quantile_fh():
+    """Quantiles are generated at the full fh and compared at quantile_fh only."""
+    case = GoldenCase(
+        name="quantile-sub-horizon",
+        estimator_params={},
+        fixture=_univariate,
+        fh=[1, 2, 10],
+        expected=np.array([5.0, 6.0, 14.0]),
+        # point forecast at steps 1 and 2, shifted by the largest step 10
+        expected_quantiles={0.5: np.array([15.0, 16.0])},
+        quantile_fh=[1, 2],
+    )
+    assert_golden_forecast(_HorizonDependentForecaster, case)
+
+    outside = GoldenCase(
+        name="quantile-outside-fh",
+        estimator_params={},
+        fixture=_univariate,
+        fh=[1, 2],
+        expected=np.array([5.0, 6.0]),
+        expected_quantiles={0.5: np.array([7.0])},
+        quantile_fh=[3],
+    )
+    with pytest.raises(AssertionError, match="quantile_fh steps .* are not in fh"):
+        assert_golden_forecast(_HorizonDependentForecaster, outside)

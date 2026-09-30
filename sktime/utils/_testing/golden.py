@@ -57,8 +57,14 @@ class GoldenCase:
         fixture, or ``(len(fh), n_variables)`` for a multivariate fixture.
     expected_quantiles : dict of float to np.ndarray, or None, default=None
         Expected quantile forecasts, keyed by quantile level ``alpha``,
-        each of the same shape as ``expected``.
+        each of shape ``(len(quantile_fh),)`` for a univariate fixture, or
+        ``(len(quantile_fh), n_variables)`` for a multivariate fixture.
         If None, ``predict_quantiles`` is not called.
+    quantile_fh : int, list, np.ndarray, ForecastingHorizon or None, default=None
+        Steps at which quantile forecasts are compared, a subset of ``fh``.
+        ``predict_quantiles`` is always called with the full ``fh``, so
+        quantiles are generated exactly as for the point forecast, and only
+        the rows at ``quantile_fh`` are compared. If None, ``fh`` is used.
     rtol : float, default=1e-5
         Relative tolerance, passed to ``np.testing.assert_allclose``.
     atol : float, default=1e-4
@@ -74,6 +80,7 @@ class GoldenCase:
     fh: object
     expected: np.ndarray
     expected_quantiles: dict[float, np.ndarray] | None = None
+    quantile_fh: object = None
     rtol: float = 1e-5
     atol: float = 1e-4
     provenance: str = ""
@@ -85,7 +92,8 @@ def assert_golden_forecast(estimator_cls, case):
     Constructs ``estimator_cls(**case.estimator_params)``, fits it on
     ``case.fixture()`` with ``fh=case.fh``, and compares ``predict`` with
     ``case.expected``. If ``case.expected_quantiles`` is set, also compares
-    ``predict_quantiles`` at those quantile levels.
+    ``predict_quantiles`` at those quantile levels, over the full ``fh``,
+    at the steps in ``case.quantile_fh``.
 
     Parameters
     ----------
@@ -113,12 +121,29 @@ def assert_golden_forecast(estimator_cls, case):
 
     alpha = sorted(case.expected_quantiles)
     pred_quantiles = estimator.predict_quantiles(fh=case.fh, alpha=alpha)
+    if case.quantile_fh is not None:
+        pred_quantiles = _select_steps(case, estimator, pred_quantiles)
     for a in alpha:
         # columns are (variable name, alpha), select by alpha only
         pred_a = pred_quantiles.xs(a, axis=1, level=-1)
         _assert_close(
             case, f"quantile {a} forecast", pred_a, case.expected_quantiles[a]
         )
+
+
+def _select_steps(case, estimator, pred_quantiles):
+    """Select the rows of a quantile forecast at the steps in ``case.quantile_fh``."""
+    from sktime.forecasting.base import ForecastingHorizon
+
+    quantile_fh = ForecastingHorizon(case.quantile_fh, freq=estimator.fh.freq)
+    index = quantile_fh.to_absolute_index(estimator.cutoff)
+    missing = index.difference(pred_quantiles.index)
+    if len(missing) > 0:
+        raise AssertionError(
+            f"golden case {case.name!r}: quantile_fh steps {list(missing)} "
+            "are not in fh"
+        )
+    return pred_quantiles.loc[index]
 
 
 def _assert_close(case, what, actual, expected):

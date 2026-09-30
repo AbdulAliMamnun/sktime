@@ -192,7 +192,7 @@ def _seeded_airline_train():
     return load_airline().iloc[:-12]
 
 
-def _timer_s1_case(name, config_overrides, forward_kwargs, expected, fh=None, **kwargs):
+def _timer_s1_case(name, config_overrides, forward_kwargs, expected, **kwargs):
     """GoldenCase for a TimerS1Forecaster with seeded random weights."""
     return GoldenCase(
         name=name,
@@ -203,7 +203,7 @@ def _timer_s1_case(name, config_overrides, forward_kwargs, expected, fh=None, **
             "deterministic": True,
         },
         fixture=_seeded_airline_train,
-        fh=_TIMER_S1_FH if fh is None else fh,
+        fh=_TIMER_S1_FH,
         expected=np.asarray(expected, dtype=np.float32),
         rtol=1e-5,
         atol=1e-4,
@@ -234,13 +234,14 @@ CASES = [
         None,
         [259.501067, 265.958752, 264.10755] + [263.565353, 258.812035, 261.972708],
     ),
-    # native quantile forecasts of the "default" case, first three steps
+    # native quantile forecasts of the "default" case, first three steps,
+    # generated over the full 48-step horizon like the point forecasts
     _timer_s1_case(
         "default-quantiles",
         {},
         None,
-        [259.501067, 265.958752, 264.10755],
-        fh=[1, 2, 3],
+        [259.501067, 265.958752, 264.10755] + [263.565356, 258.812035, 261.972707],
+        quantile_fh=[1, 2, 3],
         expected_quantiles={
             a: np.asarray(v, dtype=np.float32)
             for a, v in {
